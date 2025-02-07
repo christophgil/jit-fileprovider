@@ -29,29 +29,28 @@ SSH_ENCRYPTION=''
 ### ZIP file entries are specified by exclamation mark  following the Java jar file notion ###
 ##############################################################################################
 file_source(){
-    local file=${1}
-    local MS03=s-mcpb-ms03.charite.de
+    local file=${1}  MS03=s-mcpb-ms03.charite.de  MS04=s-mcpb-ms04.charite.de
     local rel=${file#$LOCAL_DATA/} # Relative part
-    case $file in
-        $rel) hook_print "${ANSI_FG_RED}Warning:$ANSI_RESET $file does not start with $LOCAL_DATA" && echo $file;;
+    case $rel in
+        $file) hook_print "${ANSI_FG_RED}Warning:$ANSI_RESET $file does not start with $LOCAL_DATA" && echo $file;;
         */analysis.tdf) ;&
         */analysis.tdf_bin)
             if ((WITH_FUSE_ZIP)); then
-                echo "zip:/$MS03/"{incoming,store}"/${rel%/*}.Zip"
+                echo "mount:/$MS03/"{incoming,store}"/${rel%/*}.Zip"
             else
                 echo "zip:x@$MS03:/$MS03/"{incoming,store}"/${rel%/*}.Zip!${file##*/}"
             fi
             ;;
-        *) echo x@$MS03:/$rel
+        dia/*) echo x@$MS04:/$MS04/$rel;;
+        *) echo x@$MS03:/$MS03/$rel
     esac
 }
-
-
 
 ############################################################
 ### Delete files with access time before a threshold     ###
 ############################################################
 remove_unused_files(){
+    return # DEBUG_NOW
     local f dir='' dirs='' older=${1:-}
     if [[ -n $older ]]; then
         hook_print "remove_unused_files: last access more than $older minitus ago. WITH_FUSE_ZIP=$WITH_FUSE_ZIP"
@@ -76,7 +75,7 @@ remove_unused_files(){
             rm -f $f
             local d=${f%/*}
             [[ $dir != "$d" ]] && dir=$d && dirs+="$d "
-        done < <(find $LOCAL_DATA -amin +$older \( -name 'analysis.tdf' -or -name 'DEBUG_NOW-XXXXXXXXXXXXanalysis.tdf_bin' -or -name '*.tmp' \)  )
+        done < <(find $LOCAL_DATA -amin +$older \( -name 'analysis.tdf' -or -name 'DEBUG_NOW-XXXXXXXXXXXXanalysis.tdf_bin' \)  )
     fi
     rmdir $dirs 2>/dev/null
 }

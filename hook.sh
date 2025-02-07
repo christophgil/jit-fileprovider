@@ -8,23 +8,34 @@ export GREEN_DONE=$ANSI_FG_GREEN' Done '$ANSI_RESET
 export GREEN_SUCCESS=$ANSI_FG_GREEN' Success '$ANSI_RESET
 export GREEN_ALREADY_EXISTS=$ANSI_FG_GREEN' ALREADY exists '$ANSI_RESET
 export RED_ERROR=$ANSI_FG_RED' Error '$ANSI_RESET
-readonly SRC=$(realpath $0) #${BASH_SOURCE[0]}
+
+
+if [[ $0 == /* ]];  then
+    readonly SRC=$0
+else
+    readonly SRC=$PWD/$0
+fi
 readonly LOCAL_DATA=${SRC%/*}/files
 source ${SRC%/*}/hook_configuration.sh
-
+readonly PID=$BASHPID
 
 hook_print(){
-    echo "zzzz${SRC##*/} $ANSI_YELLOW${ANSI_FG_BLACK}$*$ANSI_RESET" >&2
+    local opt=''
+    [[ ${1:-} == -n ]] && opt+=" -n" && shift
+    echo $opt  "${SRC##*/}:${BASH_LINENO[0]} $ANSI_YELLOW${ANSI_FG_BLACK}$*$ANSI_RESET" >&2
+    # $PID
 }
-
 
 hook_print_debug(){
     hook_print "$ANSI_FG_RED!!!$ANSI_FG_WHITE $*$ANSI_RESET"
 }
-
-                      runtraced(){
-    hook_print "$@"
+runtraced(){
+    hook_print -n "$@"
     "$@"
+    # $*
+    local res=$?
+    ((res)) &&  echo "$ANSI_FG_RED Failed $res $ANSI_RESET" >&2 || echo " $GREEN_SUCCESS" >&2
+    return $res
 }
 ##################################################################################################################################
 ###   Obtaining the file d given as parameter.                                                                                 ###
@@ -32,46 +43,57 @@ hook_print_debug(){
 ###   If d is a folder, then required_files returns a list of expected files in the folder, here analysis.tdf and tdf_bin.     ###
 ##################################################################################################################################
 _remove_old_files_done=0
-
+# ~/sh/test/test_lock.sh
 main(){
-    echo hhhhhhhhhhhhhhhhhhh $0
     local f="$1" src ok=1
     if [[ $FN == 'close' ]]; then
         ((_remove_old_files_done++==0)) && remove_unused_files
         return
     fi
     [[ $f != /* ]] && hook_print "$RED_ERROR: f='$f' is not an absolute path" && return
-    [[ -s $f ]] && hook_print "$GREEN_ALREADY_EXISTS $f " && return
-    local tmp=$f.$$.tmp
     mkdir -p ${f%/*}
+    local tmp="$f.PID=$PID.JOBID=$SLURM_JOBID.tmp"
+
+
+    exec {LOCK}>$f.lck
+    flock  $LOCK
+    [[ -e $f ]] && return
+
     for src in $(file_source $f); do
-        [[ -s $f ]] && continue
-        local ok1=0
+        local ok1=0 crc32
         if [[ $src =~ ^zip:(.*)!(.*)$ ]]; then
             local zip=${BASH_REMATCH[1]} zipentry=${BASH_REMATCH[2]}
-            if [[ $zip == *@*:* ]]; then
-                runtraced sshpass -e ssh $SSH_ENCRYPTION  ${zip%%:*}  $NOCACHE unzip -p ${zip#*:}  $zipentry     >$tmp  && ok1=1
+            if [[ $zip == *@*:* ]] && runtraced sshpass -e ssh $SSH_ENCRYPTION  ${zip%%:*}  $NOCACHE unzip -p ${zip#*:}  $zipentry     >$tmp; then
+                if crc32=$(~/.jit_file_provider/crc32 $tmp) && sshpass -e ssh $SSH_ENCRYPTION  ${zip%%:*}  unzip -v ${zip#*:} $zipentry| grep " $crc32 "; then
+                    echo "$GREEN_SUCCESS crc32 $f $crc32" >&2
+                    ok1=1
+                else
+                    echo "$RED_FAILED crc32 $f $crc32 '$zipentry'" >&2
+                fi
             fi
-        elif [[ $src =~ ^zip:(.*)$ ]]; then
+        elif [[ $src =~ ^mount:(.*)$ ]]; then
             local zip=${BASH_REMATCH[1]}
             local mnt=${f%/*}
-            echo mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm $mnt
+            hook_print_debug  mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm $mnt
             if  mountpoint $mnt 2>&1; then
                 ok=1
             else
                 runtraced mkdir -p $mnt && runtraced fuse-zip $zip $mnt && ok=1
             fi
-            ((ok))  && runtraced touch $mnt.mount_info
+            ((ok)) && runtraced touch $mnt.mount_info
         else
-            local cmd="sshpass -e scp $src $tmp" && hook_print "   $cmd"
-            $cmd && ok1=1
+            runtraced sshpass -e scp $src $tmp && ok1=1
         fi
         if ((ok1)); then
-            mv -f $tmp  $f
-            [[ $f == *analysis.tdf ]] && chmod -w $f
+            mv -n -v  $tmp  $f
             break
         fi
     done
+
+    flock -u $LOCK
+    rm $f.lck
+
+
     [[ ! -s $f ]] && ok=0
     ! ((ok)) && hook_print "$RED_ERROR: Failed fetching all files for $f"
     ((_remove_old_files_done++==0)) && remove_unused_files
@@ -80,17 +102,17 @@ main(){
 
 check_dependencies(){
     local res=0
-    ! vmtouch  /dev/null >/dev/null && echo "${RED_WARNING}Not available: 'vmtouch'"  && res=1
-    [[ -n $NOCACHE ]] && echo "Not going to test whether  'nocache'   is available on server"
-    ! unzip -h >/dev/null && echo "${RED_WARNING}Not available: 'unzip'"  && res=1
+    ! vmtouch  /dev/null >/dev/null && hook_print "${RED_WARNING}Not available: 'vmtouch'"  && res=1
+    [[ -n $NOCACHE ]] && hook_print "Not going to test whether  'nocache'   is available on server"
+    ! unzip -h >/dev/null && hook_print "${RED_WARNING}Not available: 'unzip'"  && res=1
 
     return $res
 }
 
-echo $ANSI_YELLOW$ANSI_FG_BLACK
+echo -n $ANSI_YELLOW$ANSI_FG_BLACK >&2
 
 
-while getopts 'zc:tv' o; do
+while getopts 'cztv' o; do
     case $o in
         z) WITH_FUSE_ZIP=1;;
         v) check_dependencies;exit 0;;
@@ -99,7 +121,6 @@ while getopts 'zc:tv' o; do
             #    readonly TEST1=$LOCAL_DATA/PRO1/Data/30-0002/20230921_PRO1_AN_038_30-0002_SreejithVarma-SACI_SP3-sample7.d
             readonly TEST1=$LOCAL_DATA/PRO1/Data/50-0036/20240506_PRO1_AN_001_50-0036_Brachs_60SPD_200ng_B2.d
             case $2 in
-                c) exec $0 close $TEST1;;
                 1) exec $0 open  $TEST1;;
                 2) exec $0 open  $TEST1/analysis.tdf;;
                 3) exec $0 open  $TEST1/analysis.tdf_bin;;
@@ -109,20 +130,22 @@ while getopts 'zc:tv' o; do
             ls -l $TEST1
             exit 0
             ;;
-        *) echo "$RED_WARNING Unknown option $o";exit 1;;
+        *) hook_print "$RED_WARNING Unknown option $o";exit 1;;
     esac
 done
 
 
 readonly FN=$1; shift
 #hook_print "This is $0 FN='$FN'  LD_PRELOAD=-nicht definiert}"
-[[ -n ${LD_PRELOAD:-} ]] && echo "${RED_WARNING} variable LD_PRELOAD must not be set: ${LD_PRELOAD}" && exit 1
+[[ -n ${LD_PRELOAD:-} ]] && hook_print "${RED_WARNING} variable LD_PRELOAD must not be set: ${LD_PRELOAD}"  && exit 1
 ls -l $LOCAL_DATA/PRO1/20241122_aaaaaaaaaaaaaaaa.d/analysis.tdf 2>/dev/null
 
+# shellcheck disable=SC2048
 for d in $*; do  ## In $1 list of paths separated by space
     main $d
 done
 
 
-echo $ANSI_RESET
+echo -n $ANSI_RESET >&2
 # Nir: Do not use it  --matrix-ch-qvalue      max-lfq
+# SSHPASS

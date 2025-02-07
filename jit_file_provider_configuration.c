@@ -14,7 +14,7 @@
 
 
 /* Files are  loaded asynchronously. Give up after waiting time [seconds]. */
-#define MAX_WAIT_FOR_FILE_SECONDS 300
+#define MAX_WAIT_FOR_FILE_SECONDS 10000
 
 
 /* Location of hook.sh and data folder. Overridden by environment variable HOOK */
@@ -55,7 +55,7 @@ static char** configuration_filelist(char **ff,const char *path){
       ff[i++]=(char*)internalize_path(path);
     }
   }
-  ff[i]=ff[i]=NULL;
+  ff[i]=NULL;
   assert(i<=CONFIGURATION_MAX_NUM_FILES);
   return ff;
 }
