@@ -7,6 +7,7 @@
 /// This is the configuration for brukertimstof data loaded with libtimsdata.so      ///
 ////////////////////////////////////////////////////////////////////////////////////////
 
+#define VERBOSE 0
 
 /* Number of files to be loaded ahead of time. See environment variable FILELIST */
 #define CONFIGURE_AHEAD 2

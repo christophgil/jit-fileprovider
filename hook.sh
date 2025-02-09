@@ -29,6 +29,10 @@ hook_print(){
 hook_print_debug(){
     hook_print "$ANSI_FG_RED!!!$ANSI_FG_WHITE $*$ANSI_RESET"
 }
+hook_print_verbose(){
+    ((VERBOSE)) && hook_print "$ANSI_FG_MAGENTA!!!$ANSI_FG_WHITE $*$ANSI_RESET"
+}
+
 runtraced(){
     hook_print -n "$@"
     "$@"
@@ -46,59 +50,60 @@ _remove_old_files_done=0
 # ~/sh/test/test_lock.sh
 main(){
     local f="$1" src ok=1
+    ((VERBOSE)) && hook_print_verbose "Entered main $f"
     if [[ $FN == 'close' ]]; then
         ((_remove_old_files_done++==0)) && remove_unused_files
         return
     fi
     [[ $f != /* ]] && hook_print "$RED_ERROR: f='$f' is not an absolute path" && return
+     [[ -s $f ]] && return
     mkdir -p ${f%/*}
-    local tmp="$f.PID=$PID.JOBID=$SLURM_JOBID.tmp"
-
-
+    local tmp="$f.PID=$PID.JOBID=$SLURM_JOBID.tmp" already=0
     exec {LOCK}>$f.lck
-    flock  $LOCK
-    [[ -e $f ]] && return
-
-    for src in $(file_source $f); do
-        local ok1=0 crc32
-        if [[ $src =~ ^zip:(.*)!(.*)$ ]]; then
-            local zip=${BASH_REMATCH[1]} zipentry=${BASH_REMATCH[2]}
-            if [[ $zip == *@*:* ]] && runtraced sshpass -e ssh $SSH_ENCRYPTION  ${zip%%:*}  $NOCACHE unzip -p ${zip#*:}  $zipentry     >$tmp; then
-                if crc32=$(~/.jit_file_provider/crc32 $tmp) && sshpass -e ssh $SSH_ENCRYPTION  ${zip%%:*}  unzip -v ${zip#*:} $zipentry| grep " $crc32 "; then
-                    echo "$GREEN_SUCCESS crc32 $f $crc32" >&2
-                    ok1=1
-                else
-                    echo "$RED_FAILED crc32 $f $crc32 '$zipentry'" >&2
+    flock $LOCK
+    if [[ -s $f ]]; then
+        already=1
+    else
+        for src in $(file_source $f); do
+            ((VERBOSE)) && hook_print_verbose "f:$f  src: $src"
+            local ok1=0 crc32
+            if [[ $src =~ ^zip:(.*)!(.*)$ ]]; then
+                local zip=${BASH_REMATCH[1]} zipentry=${BASH_REMATCH[2]}
+                if [[ $zip == *@*:* ]] && runtraced sshpass -e $SSH_CMD  ${zip%%:*}  $NOCACHE unzip -p ${zip#*:}  $zipentry     >$tmp; then
+                    if crc32=$(~/.jit_file_provider/crc32 $tmp) && sshpass -e  $SSH_CMD  ${zip%%:*}  unzip -v ${zip#*:} $zipentry| grep " $crc32 "; then
+                        echo "$GREEN_SUCCESS crc32 $f $crc32" >&2
+                        ok1=1
+                    else
+                        echo "$RED_FAILED crc32 $f $crc32 '$zipentry'" >&2
+                    fi
                 fi
-            fi
-        elif [[ $src =~ ^mount:(.*)$ ]]; then
-            local zip=${BASH_REMATCH[1]}
-            local mnt=${f%/*}
-            hook_print_debug  mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm $mnt
-            if  mountpoint $mnt 2>&1; then
-                ok=1
+            elif [[ $src =~ ^mount:(.*)$ ]]; then
+                local zip=${BASH_REMATCH[1]}
+                local mnt=${f%/*}
+                if  mountpoint $mnt 2>&1; then
+                    ok=1
+                else
+                    runtraced mkdir -p $mnt && runtraced fuse-zip $zip $mnt && ok=1
+                fi
+                ((ok)) && runtraced touch $mnt.mount_info
             else
-                runtraced mkdir -p $mnt && runtraced fuse-zip $zip $mnt && ok=1
+                runtraced sshpass -e scp $src $tmp && ok1=1
             fi
-            ((ok)) && runtraced touch $mnt.mount_info
-        else
-            runtraced sshpass -e scp $src $tmp && ok1=1
-        fi
-        if ((ok1)); then
-            mv -n -v  $tmp  $f
-            break
-        fi
-    done
-
+            if ((ok1)); then
+                mv -n -v  $tmp  $f
+                break
+            fi
+        done
+    fi # !already
     flock -u $LOCK
-    rm $f.lck
-
-
-    [[ ! -s $f ]] && ok=0
-    ! ((ok)) && hook_print "$RED_ERROR: Failed fetching all files for $f"
-    ((_remove_old_files_done++==0)) && remove_unused_files
+    rm $f.lck 2>/dev/null
+    if ((!already)); then
+        [[ ! -s $f ]] && ok=0
+        ! ((ok)) && hook_print "$RED_ERROR: Failed fetching all files for $f"
+        ((_remove_old_files_done++==0)) && remove_unused_files
+    fi
 }
-
+HISTCONTROL=ignorespace
 
 check_dependencies(){
     local res=0

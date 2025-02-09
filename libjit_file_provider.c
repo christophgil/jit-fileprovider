@@ -87,7 +87,7 @@ static char *local_files(void){
 static void jit_file_set_atime(const char *path,  time_t mtime){
   if (!path) return;
   const int path_l=strlen(path);
-  //log_entered_function("%s",path);
+  if (VERBOSE) log_entered_function("%s",path);
   time_t t=time(NULL),t1;
   const ht_hash_t hash=hash32(path,path_l);
   {
@@ -97,7 +97,6 @@ static void jit_file_set_atime(const char *path,  time_t mtime){
   }
   //log_debug_now(ANSI_COLOR" t1: %ld t: %ld   diff: %ld"ANSI_RESET,t1,t, t-t1);
   if (t-t1>60){ /* Skip if atime newer than .. */
-    //log_entered_function(ANSI_COLOR"%s"ANSI_RESET,path);
     {
       pthread_mutex_lock(&_mutex_intern_path);
       ht_set(&_ht_atime,path,path_l,hash,(void*)t);
@@ -162,7 +161,7 @@ static const char** filepaths_in_textfile(const char *fl,int *n){
 }
 static void ahead_init(void){
   if (!CONFIGURE_AHEAD) return;
-  //log_entered_function("PID=%d",getpid());
+  if (VERBOSE) log_entered_function("PID=%d",getpid());
   ht_init(&_ht_ahead,"_ht_ahead",8|HT_FLAG_KEYS_ARE_STORED_EXTERN);
   int n=0;
   char *e=getenv("FILELIST");
@@ -212,7 +211,7 @@ void _init_c(void){
   atexit(my_ataxit);
   setlocale(LC_NUMERIC,""); /* Enables decimal grouping in fprintf */
   unsetenv("LD_PRELOAD"); /* Prevent pre-loading for hook.sh  */
-  log_entered_function(ANSI_COLOR" _inititialized=%d  pid: %d "ANSI_RESET,_inititialized,getpid());
+  if (VERBOSE) log_entered_function(ANSI_COLOR" _inititialized=%d  pid: %d "ANSI_RESET,_inititialized,getpid());
   ASSIGN_ORIG();
   pthread_mutex_init(&_mutex_exec,NULL); /* Only one hook.sh at a time */
   pthread_mutex_init(&_mutex_intern_path,NULL); /* Synchronize String internalization */
@@ -257,7 +256,6 @@ static mode_t get_file_mode(const int statx_flags,const char *path, time_t *mtim
 /// This function is started with pthread_create from hook() thread.  ///
 /////////////////////////////////////////////////////////////////////////
 static int ff_concat(char *s,const char **ff, const int n){
-  //log_entered_function("");
   int l=0;
   FOR(i,0,n){
     const char *f=ff[i];
@@ -273,15 +271,14 @@ static int ff_concat(char *s,const char **ff, const int n){
 }
 
 static void* hook_thread(void *thread_para){
-  //log_entered_function("");
   const char **ff=((const char**)thread_para)+IDX_FILE_LIST;
   const char *funcname=ff[-1];
   assert(IDX_FILE_LIST==1);
-  if (!funcname) funcname="";
-  const int n=cg_idx_of_NULL((void**)ff);
+  const int n=cg_idx_of_NULL((void**)ff,HOOK_FILEPATHS+1);
+  //log_entered_function("n=%d",n);
   char *filelist=malloc(cg_sum_strlen(ff,n)+n+1);
   if (ff_concat(filelist,ff,n)){
-    //log_entered_function("\n%s\n",filelist);
+    //log_debug_now("\n%s\n",filelist);
     //pthread_mutex_lock(&_mutex_exec); /* Only one instance at a time ! */
     const pid_t pid=fork(); /* Make real file by running external prg */
     if (pid<0){ log_error("fork()");perror("fork() waitpid 1 returned %d"); return NULL;}
@@ -339,45 +336,40 @@ static void hook_unsynchronized(const char *funcname,const char *path){
   if (ENDSWITH(path,path_l,".so") || ENDSWITH(path,path_l,"/hook.sh")) return;
   struct ht unique;  ht_init_with_keystore_dim(&unique,"unique",4,4096);
   const char *funcname_and_ff[HOOK_FILEPATHS+IDX_FILE_LIST+1]={0}; /* funcname. Then NULL terminated list of file paths */
-  funcname_and_ff[0]=funcname;
+  funcname_and_ff[0]=funcname?funcname:"";
   const char **ff=funcname_and_ff+IDX_FILE_LIST;
-#define E(e) ENDSWITH(path,path_l,e)
-  const bool verbose=E(".tdf")||E(".tdf_bin")||E(".speclib");
-#undef E
-  const int n0=add_to_file_list(ff,path,&unique);
+  const int n0=add_to_file_list(ff,path,&unique);  /* In case of Brukertimstof path: filepath.d would yield  "analysis.tdf" and "analysis.tdf_bin */
   int n=n0;
-  if (verbose){
-    RLOOP(i,n0){
-      const char **aa=ht_sget(&_ht_ahead,ff[i]);
-      if (aa) FOREACH_CSTRING(a,aa){
-          n+=add_to_file_list(ff+n,*a,&unique);
-        }
-    }
+  bool missing=false;
+  RLOOP(i,n0){
+    const char **aa=ht_sget(&_ht_ahead,ff[i]);
+    if (aa) FOREACH_CSTRING(a,aa){
+        n+=add_to_file_list(ff+n,*a,&unique);
+      }
+    if (get_file_mode(0,ff[i],NULL,NULL)) ff[i]=""; else  missing=true;
   }
-  if (!n) return;
-  assert(n==cg_idx_of_NULL((void**)ff));
+  if (!missing) return;
+  log_debug_now("xxxxxxxxx %s %s  n0: %d n: %d\n"ANSI_RESET,path, n==n0?ANSI_FG_RED:ANSI_FG_GREEN,n0,n);
   const long now=currentTimeMillis();
   {
     pthread_t *thread=calloc(1,sizeof(pthread_t));
     const int N=SIZEOF_POINTER*(n+IDX_FILE_LIST+1);
-    char *ff=malloc(N);
-    pthread_create(thread,NULL,&hook_thread,memcpy(ff,funcname_and_ff,N));
+    pthread_create(thread,NULL,&hook_thread,memcpy(malloc(N),funcname_and_ff,N));
   }
-  {
-    bool found[CONFIGURATION_MAX_NUM_FILES+1]={false};
-    RLOOP(i,MAX_WAIT_FOR_FILE_SECONDS){
-      putc('*',stderr);
-      bool missing=false;
-      RLOOP(k,n0){ /* n0 is number of files. Brukertimstof would be "analysis.tdf" and "analysis.tdf_bin" */
-        if (!found[k] && (missing=!get_file_mode(0,ff[k],NULL,NULL))){
-          if (!i) log_warn("Giving up on %s\n",ff[k]);
-          break;
-        }
-        found[k]=true;
+
+  RLOOP(i,MAX_WAIT_FOR_FILE_SECONDS){
+    putc('*',stderr);
+    missing=false;
+    RLOOP(k,n0){ /* n0 is number of immediatly required files, wheras n is number of files required now and later. */
+      if (*ff[k] && (missing=!get_file_mode(0,ff[k],NULL,NULL))){
+        if (!i) log_warn("Giving up on %s\n",ff[k]);
+        break;
       }
-      if (!missing) break;
-      usleep(1024*1024);
+      ff[k]="";
     }
+    if (!missing) break;
+    usleep(1024*1024);
+
   }
   {
     const int ms=(int)(currentTimeMillis()-now);
@@ -399,7 +391,7 @@ static void hook(const char *funcname,const char *path){
 
 static void hook_fd(const char *funcname,const int fd){
   if (fd>2){
-    //log_entered_function("%s  %d",funcname,fd);
+    if (VERBOSE) log_entered_function("%s  %d",funcname,fd);
     char path[PATH_MAX+1];
     cg_path_for_fd(funcname, path,fd);
     if (!*path) log_error(ANSI_COLOR"path is zero for fd=%d"ANSI_RESET,fd);
