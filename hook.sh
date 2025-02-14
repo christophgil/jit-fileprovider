@@ -22,7 +22,8 @@ readonly PID=$BASHPID
 hook_print(){
     local opt=''
     [[ ${1:-} == -n ]] && opt+=" -n" && shift
-    echo $opt  "${SRC##*/}:${BASH_LINENO[0]} $ANSI_YELLOW${ANSI_FG_BLACK}$*$ANSI_RESET" >&2
+    local src=${BASH_SOURCE[2]}
+    echo $opt  "${src##*/}:${BASH_LINENO[1]} $ANSI_YELLOW${ANSI_FG_BLACK}$*$ANSI_RESET" >&2
     # $PID
 }
 
@@ -30,7 +31,7 @@ hook_print_debug(){
     hook_print "$ANSI_FG_RED!!!$ANSI_FG_WHITE $*$ANSI_RESET"
 }
 hook_print_verbose(){
-    ((VERBOSE)) && hook_print "$ANSI_FG_MAGENTA!!!$ANSI_FG_WHITE $*$ANSI_RESET"
+    ((VERBOSE_HOOK)) && hook_print "$ANSI_FG_MAGENTA!!!$ANSI_FG_WHITE $*$ANSI_RESET"
 }
 
 runtraced(){
@@ -50,7 +51,7 @@ _remove_old_files_done=0
 # ~/sh/test/test_lock.sh
 main(){
     local f="$1" src ok=1
-    ((VERBOSE)) && hook_print_verbose "Entered main $f"
+    ((VERBOSE_HOOK)) && hook_print_verbose "Entered main $f"
     if [[ $FN == 'close' ]]; then
         ((_remove_old_files_done++==0)) && remove_unused_files
         return
@@ -58,19 +59,22 @@ main(){
     [[ $f != /* ]] && hook_print "$RED_ERROR: f='$f' is not an absolute path" && return
      [[ -s $f ]] && return
     mkdir -p ${f%/*}
-    local tmp="$f.PID=$PID.JOBID=$SLURM_JOBID.tmp" already=0
-    exec {LOCK}>$f.lck
+    local tmp="$f.PID=$PID.JOBID=${SLURM_JOBID:-0}.tmp" already=0
+    local lck=$f.lck
+    ((WITH_FUSE_ZIP)) && lck=~/.jit_file_provider/lock_fuse_zip.lck
+    exec {LOCK}>$lck
     flock $LOCK
+    local sshpass=${SSHPASS:+sshpass -e}
     if [[ -s $f ]]; then
         already=1
     else
         for src in $(file_source $f); do
-            ((VERBOSE)) && hook_print_verbose "f:$f  src: $src"
+            ((VERBOSE_HOOK)) && hook_print_verbose "f:$f  src: $src"
             local ok1=0 crc32
             if [[ $src =~ ^zip:(.*)!(.*)$ ]]; then
                 local zip=${BASH_REMATCH[1]} zipentry=${BASH_REMATCH[2]}
-                if [[ $zip == *@*:* ]] && runtraced sshpass -e $SSH_CMD  ${zip%%:*}  $NOCACHE unzip -p ${zip#*:}  $zipentry     >$tmp; then
-                    if crc32=$(~/.jit_file_provider/crc32 $tmp) && sshpass -e  $SSH_CMD  ${zip%%:*}  unzip -v ${zip#*:} $zipentry| grep " $crc32 "; then
+                if [[ $zip == *@*:* ]] && runtraced $sshpass $SSH_CMD  ${zip%%:*}  $NOCACHE unzip -p ${zip#*:}  $zipentry     >$tmp; then
+                    if crc32=$(~/.jit_file_provider/crc32 $tmp) && $sshpass  $SSH_CMD  ${zip%%:*}  unzip -v ${zip#*:} $zipentry| grep " $crc32 "; then
                         echo "$GREEN_SUCCESS crc32 $f $crc32" >&2
                         ok1=1
                     else
@@ -83,11 +87,11 @@ main(){
                 if  mountpoint $mnt 2>&1; then
                     ok=1
                 else
-                    runtraced mkdir -p $mnt && runtraced fuse-zip $zip $mnt && ok=1
+                    runtraced mkdir -p $mnt && runtraced fuse-zip -o nonempty $zip $mnt && ok=1
                 fi
                 ((ok)) && runtraced touch $mnt.mount_info
             else
-                runtraced sshpass -e scp $src $tmp && ok1=1
+                runtraced $sshpass scp $src $tmp && ok1=1
             fi
             if ((ok1)); then
                 mv -n -v  $tmp  $f
@@ -96,7 +100,7 @@ main(){
         done
     fi # !already
     flock -u $LOCK
-    rm $f.lck 2>/dev/null
+    ! ((WITH_FUSE_ZIP)) && rm $lck 2>/dev/null
     if ((!already)); then
         [[ ! -s $f ]] && ok=0
         ! ((ok)) && hook_print "$RED_ERROR: Failed fetching all files for $f"
@@ -117,9 +121,8 @@ check_dependencies(){
 echo -n $ANSI_YELLOW$ANSI_FG_BLACK >&2
 
 
-while getopts 'cztv' o; do
+while getopts 'c:tv' o; do
     case $o in
-        z) WITH_FUSE_ZIP=1;;
         v) check_dependencies;exit 0;;
         c) remove_unused_files $OPTARG;exit 0;;
         t)

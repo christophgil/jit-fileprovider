@@ -7,7 +7,7 @@
 /// This is the configuration for brukertimstof data loaded with libtimsdata.so      ///
 ////////////////////////////////////////////////////////////////////////////////////////
 
-#define VERBOSE 0
+
 
 /* Number of files to be loaded ahead of time. See environment variable FILELIST */
 #define CONFIGURE_AHEAD 2
@@ -55,6 +55,8 @@ static char** configuration_filelist(char **ff,const char *path){
     if (!strncmp(path,local_files(),local_files_l())){
       ff[i++]=(char*)internalize_path(path);
     }
+  }else if (strstr(path,"/test_JIT_file_provider/") && (E(".txt") || E(".zip"))){ /* See testing/testing_JIT_file_provider.sh */
+      ff[i++]=(char*)internalize_path(path);
   }
   ff[i]=NULL;
   assert(i<=CONFIGURATION_MAX_NUM_FILES);

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-readonly REMOVE_OLDER_MINUTES=20  # Keep files which have not been accessed  for x minutes.
-readonly NOCACHE=nocache  # Set to empty string if remote source comptuter does not has nocache
-readonly VERBOSE=0
+
+readonly REMOVE_OLDER_MINUTES=30  # Keep files which have not been accessed  for x minutes.
+[[ -z ${VERBOSE_HOOK:-} ]] && readonly NOCACHE=nocache          # Set to empty string if remote source computer does not has nocache
+[[ -z ${VERBOSE_HOOK:-} ]] && readonly VERBOSE_HOOK=0
 
 ###################################################################
 ### Alternatively mount ZIP files with fuse-zip                 ###
@@ -31,6 +32,8 @@ SSH_CMD='ssh'
 file_source(){
     local file=${1}  MS03=s-mcpb-ms03.charite.de  MS04=s-mcpb-ms04.charite.de
     local rel=${file#$LOCAL_DATA/} # Relative part
+    local user=${SSH_USER:-$USER}
+    ((VERBOSE_HOOK)) && hook_print_verbose "Entered  ${FUNCNAME[0]} file: $file WITH_FUSE_ZIP: $WITH_FUSE_ZIP user: $user"
     case $rel in
         $file) hook_print "${ANSI_FG_RED}Warning:$ANSI_RESET $file does not start with $LOCAL_DATA" && echo $file;;
         */analysis.tdf) ;&
@@ -42,7 +45,20 @@ file_source(){
             fi
             ;;
         dia/*) echo x@$MS04:/$MS04/$rel;;
+        test_JIT_file_provider/*)   # See testing/testing_JIT_file_provider.sh
+            if ((WITH_FUSE_ZIP)); then
+                echo "mount:/$HOME/${rel%/*}.zip"
+            elif [[ $file == *.txt ]]; then
+                echo "zip:$user@localhost:$HOME/${rel%/*}.zip!${file##*/}"
+            elif [[ $file == *.zip ]]; then
+                echo "$user@localhost:$HOME/${rel}"
+            else
+                hook_print "$RED_ERROR Unrecognized file type $file"
+            fi
+            ;;
         *) echo x@$MS03:/$MS03/$rel
+
+
     esac
 }
 
@@ -52,28 +68,29 @@ file_source(){
 remove_unused_files(){
     local f dir='' dirs='' older=${1:-}
     if [[ -n $older ]]; then
-        hook_print "remove_unused_files: last access more than $older minitus ago. WITH_FUSE_ZIP=$WITH_FUSE_ZIP"
+        hook_print "Going to remove unused files with last access more than $older minutes ago. WITH_FUSE_ZIP=$WITH_FUSE_ZIP"
     else
         older=$REMOVE_OLDER_MINUTES
     fi
     # Todo unmount zips
-
+    local subdir=${HOOK_DIRNAME:-}
+    [[ $subdir == *..* ]] && hook_print "$RED_ERROR: HOOK_DIRNAME: $HOOK_DIRNAME"
     if ((WITH_FUSE_ZIP)); then
         while read -r f; do
             local d=${f%.mount_info}
             set -x
-            fusermount -u $d
+            mountpoint -q $d && fusermount -u $d
             set +x
             rmdir $d
             [[ ! -e $d ]] && rm $f
-        done < <(find $LOCAL_DATA -amin +$older \( -name '*.mount_info' \)  )
+        done < <(find $LOCAL_DATA/$subdir -amin +$older -name '*.mount_info')
     else
         while read -r f; do
             hook_print "remove_old_files $f"
             rm -v -f $f
             local d=${f%/*}
             [[ $dir != "$d" ]] && dir=$d && dirs+="$d "
-        done < <(find $LOCAL_DATA -amin +$older \( -name 'analysis.tdf' -or -name 'analysis.tdf_bin' \)  )
+        done < <(find $LOCAL_DATA/$subdir -amin +$older -type f)
     fi
     rmdir $dirs 2>/dev/null
 }

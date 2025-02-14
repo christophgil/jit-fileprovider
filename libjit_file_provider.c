@@ -45,7 +45,7 @@ static int local_files_l(void){
   if (!l) l=strlen(local_files());
   return l;
 }
-static pthread_mutex_t _mutex_intern_path, _mutex_exec;
+static pthread_mutex_t _mutex_intern_path, _mutex_hook;
 static struct ht _ht_intern_path,_ht_atime, _ht_ahead;
 static const char *internalize_path(const char *path){
   if (!path) return NULL;
@@ -65,6 +65,14 @@ static int _sumwait=0,_longestwait=0;
 /// Directory where fetched files are located ///
 /// hook.sh is providing the files here       ///
 /////////////////////////////////////////////////
+static bool is_verbose(){
+  static int verbose;
+  if (!verbose){
+    const char *v=getenv("VERBOSE_SO");
+    verbose=v && *v>'0'?1:-1;
+  }
+  return verbose==1;
+}
 static char *local_files(void){
   static char *d;
   if (!d){
@@ -87,7 +95,7 @@ static char *local_files(void){
 static void jit_file_set_atime(const char *path,  time_t mtime){
   if (!path) return;
   const int path_l=strlen(path);
-  if (VERBOSE) log_entered_function("%s",path);
+  if (is_verbose()) log_entered_function("%s",path);
   time_t t=time(NULL),t1;
   const ht_hash_t hash=hash32(path,path_l);
   {
@@ -161,7 +169,7 @@ static const char** filepaths_in_textfile(const char *fl,int *n){
 }
 static void ahead_init(void){
   if (!CONFIGURE_AHEAD) return;
-  if (VERBOSE) log_entered_function("PID=%d",getpid());
+  if (is_verbose()) log_entered_function("PID=%d",getpid());
   ht_init(&_ht_ahead,"_ht_ahead",8|HT_FLAG_KEYS_ARE_STORED_EXTERN);
   int n=0;
   char *e=getenv("FILELIST");
@@ -172,7 +180,7 @@ static void ahead_init(void){
     const char *ahead0[CONFIGURE_AHEAD+1];
     int a=0;
     FOR(k,0,MIN(CONFIGURE_AHEAD,n-i-1)){
-      log_debug_now("%d) '%s' -> (%d)'%s'",i,ff[i],a,ff[i+k+1]);
+      //if (is_verbose()) log_debug_now("%d) '%s' -> (%d)'%s'",i,ff[i],a,ff[i+k+1]);
       assert(ff[i+k+1]);
       ahead0[a++]=ff[i+k+1];
     }
@@ -182,20 +190,19 @@ static void ahead_init(void){
     char *gg[CONFIGURATION_MAX_NUM_FILES+1]={0};
     FOREACH_CSTRING(g,configuration_filelist(gg,ff[i])){
       ht_sset(&_ht_ahead,*g,ahead);
-      log_debug_now(" %s -> %s",*g,ahead[0]);
+      if (is_verbose()) log_debug_now(" %s -> %s",*g,ahead[0]);
       assert(ht_sget(&_ht_ahead,*g)==ahead);
     }
   }
-  log_exited_function("");
+  if (is_verbose()) log_exited_function("");
 }
 //////////////////////////////////////////////////////
 ///         Initialization                         ///
 //////////////////////////////////////////////////////
 void *my_dlsym(const char *symbol){
-  bool debug=!strcmp("stat",symbol);
   void *s=dlsym(RTLD_NEXT,symbol);
-  if (debug) log_debug_now("symbol:%s  address:%p\n",symbol,s);
-  if (!s) log_error("%s dlsym  %s\n",__FILE__,dlerror());
+  //if (!strcmp("stat",symbol)) log_debug_now("symbol:%s  address:%p\n",symbol,s);
+  if (!s) log_warn("%s dlsym  %s\n",__FILE__,dlerror());
   return s;
 }
 static void report_time(const int ms){
@@ -211,15 +218,15 @@ void _init_c(void){
   atexit(my_ataxit);
   setlocale(LC_NUMERIC,""); /* Enables decimal grouping in fprintf */
   unsetenv("LD_PRELOAD"); /* Prevent pre-loading for hook.sh  */
-  if (VERBOSE) log_entered_function(ANSI_COLOR" _inititialized=%d  pid: %d "ANSI_RESET,_inititialized,getpid());
+  if (is_verbose()) log_entered_function(ANSI_COLOR" _inititialized=%d  pid: %d "ANSI_RESET,_inititialized,getpid());
   ASSIGN_ORIG();
-  pthread_mutex_init(&_mutex_exec,NULL); /* Only one hook.sh at a time */
+  pthread_mutex_init(&_mutex_hook,NULL); /* Only one hook.sh at a time */
   pthread_mutex_init(&_mutex_intern_path,NULL); /* Synchronize String internalization */
   ht_init(&_ht_atime,"_ht_atime",12); /* set atime not too often */
   { /* Set variable _hookfile */
     const char *h=getenv("HOOK");
     cg_path_expand_tilde(_hookfile,0,h&&*h?h: DEFAULT_DOT_FILE"/hook.sh");
-    log_debug_now("hook: %s",_hookfile);
+    //log_debug_now("hook: %s",_hookfile);
     int res;
     const mode_t mode=get_file_mode(0,_hookfile,NULL,&res);
     if (res) DIE("Executable hook file %s does not exist: %s\n",_hookfile, error_symbol(res));
@@ -279,7 +286,7 @@ static void* hook_thread(void *thread_para){
   char *filelist=malloc(cg_sum_strlen(ff,n)+n+1);
   if (ff_concat(filelist,ff,n)){
     //log_debug_now("\n%s\n",filelist);
-    //pthread_mutex_lock(&_mutex_exec); /* Only one instance at a time ! */
+
     const pid_t pid=fork(); /* Make real file by running external prg */
     if (pid<0){ log_error("fork()");perror("fork() waitpid 1 returned %d"); return NULL;}
     if (!pid){
@@ -292,7 +299,6 @@ static void* hook_thread(void *thread_para){
       //log_debug_now("waitpid wwwwwwwwwww sssssssssssssssssssssssssssss status %d  %s %s ",status,error_symbol(status), strerror(status));
       if (status) log_error("Status: %d for %s",status,_hookfile);
     }
-    //    pthread_mutex_unlock(&_mutex_exec);
   }
   free(thread_para);
   free(filelist);
@@ -343,13 +349,11 @@ static void hook_unsynchronized(const char *funcname,const char *path){
   bool missing=false;
   RLOOP(i,n0){
     const char **aa=ht_sget(&_ht_ahead,ff[i]);
-    if (aa) FOREACH_CSTRING(a,aa){
-        n+=add_to_file_list(ff+n,*a,&unique);
-      }
+    if (aa) FOREACH_CSTRING(a,aa) n+=add_to_file_list(ff+n,*a,&unique);
     if (get_file_mode(0,ff[i],NULL,NULL)) ff[i]=""; else  missing=true;
   }
   if (!missing) return;
-  log_debug_now("xxxxxxxxx %s %s  n0: %d n: %d\n"ANSI_RESET,path, n==n0?ANSI_FG_RED:ANSI_FG_GREEN,n0,n);
+  //log_debug_now("xxxxxxxxx %s %s  n0: %d n: %d\n"ANSI_RESET,path, n==n0?ANSI_FG_RED:ANSI_FG_GREEN,n0,n);
   const long now=currentTimeMillis();
   {
     pthread_t *thread=calloc(1,sizeof(pthread_t));
@@ -381,17 +385,17 @@ static void hook_unsynchronized(const char *funcname,const char *path){
 }
 static void hook(const char *funcname,const char *path){
   static int count;
-  pthread_mutex_lock(&_mutex_exec); /* Only one instance at a time ! */
+  pthread_mutex_lock(&_mutex_hook); /* Synchronize access to ht_log ! */
   static struct ht ht_log;
   if (!ht_log.capacity)  ht_init_with_keystore_dim(&ht_log,"ht_log",6,1024);
   if (ht_only_once(&ht_log,funcname,0)) log_msg("Calling  hook(%s,%s) ...\n",funcname,path);
   hook_unsynchronized(funcname,path);
-  pthread_mutex_unlock(&_mutex_exec);
+  pthread_mutex_unlock(&_mutex_hook);
 }
 
 static void hook_fd(const char *funcname,const int fd){
   if (fd>2){
-    if (VERBOSE) log_entered_function("%s  %d",funcname,fd);
+    if (is_verbose()) log_entered_function("%s  %d",funcname,fd);
     char path[PATH_MAX+1];
     cg_path_for_fd(funcname, path,fd);
     if (!*path) log_error(ANSI_COLOR"path is zero for fd=%d"ANSI_RESET,fd);
