@@ -11,10 +11,11 @@ export RED_ERROR=$ANSI_FG_RED' Error '$ANSI_RESET
 export RED_WARNING=$ANSI_FG_RED' Warning '$ANSI_RESET
 export DEBUG_NOW_MAGENTA=${ANSI_MAGENTA}DEBUG_NOW$ANSI_RESET
 
-JITCOMPILE=${BASH_SOURCE[0]}
+JITCOMPILE=$0
+[[ $JITCOMPILE != /* ]] && JITCOMPILE=$PWD/${JITCOMPILE#./}
 DIR=${JITCOMPILE%/*}
-echo DIR: $DIR
-cd ~ || return # Otherwise the logs contain relative paths
+echo "DIR: $DIR"
+cd ~ || read -r -p 'Enter'  # Otherwise the logs contain relative paths
 n=${JITCOMPILE##*/}
 JITNAME=${n%%.*}
 JITDIR=~/.jit_file_provider
