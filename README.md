@@ -1,52 +1,60 @@
 Just-in-time file provider
 
-Status:   under development
+Status:   Testing
 
 
 DESCRIPTION
 ===========
 
-Just-in-time-file-provider is used for a long running computations where large numbers of files are loaded one after the other  and where the files need to be extracted  from an archive.
-In mass-spectrometry analysis, for example, thousands of  mass-spectrometry files are read one after the other by the analysis software.
-The list of files can be worked up using several HPC cluster nodes in parallel.
+Just-in-time-file-provider provides files for long running computations from archives or remote sources.  In
+mass-spectrometry analysis, for example, thousands of mass-spectrometry files are processed one after the
+other by the analysis software. The files might be located in a NAS storage. In our case they are organized as ZIP archives.
 
-The program logic is implemented as a pre-loaded shared library. It  observes all attempts to access a file by the analysis software and provides the required files just-in-time.
-For files with a specific name or path, a shell script *hook.sh* is called to load the file or to mount the
-containing archive.
 
-Optionally, a file list can be provided such that the successor file can already be obtained in advance to save the time.
+The program logic is implemented as a pre-loaded shared library.  At the time the analysis software
+is started, the required files are usually not accessible yet.  JIT-file-provider
+observes all  file requests by the analysis software and provides the requested files
+just-in-time.
+
+
+The program logic for obtaining the files is implemented in shell scripts with the name *hook.sh*
+and *hook_configuration.sh* and can easily be customized.
+
+Optionally, a file list can be provided such that for each file the successor file is known.  This
+allows to load files already during the computation of the previous file.
 
 Motivation
 ==========
 
-We are processing huge mass spectrometry data on
-a high performance LINUX cluster.
+We are processing huge mass spectrometry data on a high performance Linux cluster.
 
 The data is located in ZIP archives on a WORM storage.
 
-Fuse file systems are not supported on the cluster.  Anyway, mass-spectrometry file loading by the application would not work well with files
-on remote or fuse file systems.  This is because file reading is saltatoric and random rather than sequential.
+<!-- Fuse file systems are not supported on the cluster.  Anyway, mass-spectrometry file loading by the application would not work well with files -->
+<!-- on remote or fuse file systems.  This is because file reading is saltatoric and random rather than sequential. -->
 
-The legacy approach is to copy all required files to the cluster prior running the
-computation. However, this  takes some hours to days and requires large disk space on the cluster which might exceed
-the disk quota.
+The conventional approach is to copy all required files to the cluster prior starting the
+computation. However, copying that many files takes some hours to days and requires large disk space
+on the cluster which is often not available.
 
 
 Implementation
 ==============
 
 Method calls to the C-library are intercepted in order to get notification what files are going to be loaded by the application.
-Our pre-loaded shared library will call a Bash script *hook.sh* which loads the required file or files.
+JIT-file-provider is a pre-loaded shared library which calls a Bash script *hook.sh* to load the required file or files.
 
-The user gives rules which  files are  obtained by what method.   For example
+
+The user gives rules which files are  obtained by what method.   In our case
 a file may be  loaded by running  ~/usr/bin/unzip~:
 
     sshpass -e ssh   user@hostname  nocache unzip -p zip-file.zip  zip-entry > file
 
-If unzip is applied, the crc32-checksum is compared to the checksum in the Zip file.
+Subsequently, the crc32-checksum is compared to the checksum in the Zip file.
+Alternatively, files are copied with ~/usr/bin/scp~ or ZIP archives are mounted with ~/usr/bin/fuse-zip~.
 
-The last-access time is used for clean-up.  Files which have not been used for some time can be automatically  removed
-to free disk space on the cluster.  The last-access time is updated explicitly for the  case of *noatime* mount option.
+The last-access time is used for clean-up.  Files which have not been used for a given number of minutes are automatically removed
+to free disk space on the cluster.  The last-access time is updated explicitly for the case that the mount option  *noatime* is activated.
 
 
 Installation
@@ -54,7 +62,7 @@ Installation
 
 
 
-JIT-file-provider is compiled on the target machine like the  HPC cluster by running the installer script ~libjit_file_provider.compile.sh~.
+JIT-file-provider is installed  on the target machine like the  HPC cluster by running the installer script ~libjit_file_provider.compile.sh~.
 The C compiler gcc or clang is sufficient.
 
 Three files are generated:
@@ -63,19 +71,21 @@ Three files are generated:
  - ~/.jit_file_provider/hook.sh
  - ~/.jit_file_provider/hook_configuration.sh
 
-Install the packages: fuse-zip nocache unzip sshpass openssh
+Required Linux packages: fuse-zip nocache unzip sshpass openssh
 
 Testing
 =======
 
-Set-up ssh access for the current user ID or for another user ID.
-Alternatively, set  export SSHPASS='the secret password'.
+SSH needs to be set up to work unattended without entering a password. This may be done for the current or a different user ID.
+A simple and secure approach is to create a user ID with read access to the data and to set the variable ~SSHPASS~ with the password of this user ID:
+
+    export SSHPASS='the secret password'
 
 Check
 
-     ssh the-user-id@localhost date
+     sshpass -e ssh the-user-id@localhost date
 
-If you see the date without entering the password then ssh works.
+This command  displays the date and time  without asking for  the password.
 Run the script
 
     testing/testing_JIT_file_provider.sh
@@ -84,59 +94,63 @@ This script creates a ZIP file repository in
 
     ~/test_JIT_file_provider
 
-This folder name serves as a pattern in the configuration files ~hook_configuration.sh~ and ~jit_file_provider_configuration.c~.
-JIT-file-provider accesses the ZIP entries using one of the methods
+
+This simulates the file repository from which the files need to be extracted.
+
+<!-- This folder name serves as a pattern in the configuration files ~hook_configuration.sh~ and ~jit_file_provider_configuration.c~. -->
+<!-- JIT-file-provider accesses the ZIP entries using one of the methods -->
+
+The program menu, lets you specify a user ID. Then you can choose one of the above methods.
 
   - fuse-zip.  No user ID and password required.
   - ssh unzip. In this example it will be applied to files ending with .txt
   - scp.       In this example it will be applied to files ending with .zip
 
-The program menu, lets you specify a user ID. Then you can choose one of the above methods.
 
-Watch out for green messages stating that things worked.
-Files should appear in
+The test script simulates an application which expects files in
 
     ~/.jit_file_provider/files
 
+Watch out for green success-reports in the output and observe how files appear in this folder.
 
 Configuration
 =============
 
 For configuration, it is recommended to install and test JIT-file-provider on the working Linux PC before going to a high-performance-cluster.
-Verbosity can be specified in environment variables.
 
-    export VERBOSE_HOOK=1
-    export VERBOSE_SO=1
-
-The user edits two or three configuration files to define rules how files are obtained by
+In the configuration files, the  rules for  obtaining files are specified.
 Then a  test  command like the following may be used for validation:
 
     LD_PRELOAD=~/.jit_file_provider/libjit_file_provider.so head ~/.jit_file_provider/files/file-path | strings
 
-The respective files  in  ~$HOME/.jit_file_provider/files~ should come into existence.
+The respective files  appear in  ~$HOME/.jit_file_provider/files~  as soon as they are loaded by the command, here ~/usr/bin/head~.
+
+Verbosity can be activated with environment variables.
+
+    export VERBOSE_HOOK=1
+    export VERBOSE_SO=1
 
 
-Program functions  which can be customized by the user are recognized by the prefix *configuration_*.
+Configurable files:
 
  - jit_file_provider_symbols_configuration.c
-   This file lists the function names  of the C-library or of other program libraries which need to be observed by JIT-file-provider.
-   In most cases,  this file does not need to be modified.
-   JIT-file-provider reports all caught functions once.
-   Look for the text string  *Calling hook* in the standard error output to verify that the C-functions are caught.
-   Problems occur when C functions are implemented by different library functions.
+   This file lists the C-functions to be observed by JIT-file-provider.
+Usually,  this file does not need to be modified.
+   However, problems may  occur when C functions are implemented by other library functions.
    For example  JIT-file-provider worked fine on our development machine, but failed on the  HPC cluster because
-   a call to *stat()* is internally a call to  statx(). This was detected with the tool ~/usr/bin/strace~.
-   We added *statx()* to the list in jit_file_provider_symbols_configuration.c and solved the problem.
-   Please report problems like this.
+   the function *stat()* was implemented with the method   statx() in the standard C-library.
+   To identify problems like this, JIT-file-provider reports all caught functions once as   *Calling hook ...*, however stat() did not appear.
+   With the tool ~/usr/bin/strace~ we found that  *statx()* and not *stat()* is reported . Adding it to the list in jit_file_provider_symbols_configuration.c and solved the problem.
+   Please report cases like this.
 
 - jit_file_provider_configuration.c:
-   When jit_file_provider.so catches  calls to methods like fopen() the paths are subjected to  *configuration_filelist()*.
-   This function  should  return a NULL terminated list of files needed along with the given path.
+   When jit_file_provider.so catches  calls to methods like fopen() the paths are evaluated by the function  *configuration_filelist()* which   returns
+   a NULL terminated list of files needed along with the given path.
    This list may be empty for files not to be managed by jit-file-provider.
    In our example a path with the ending ".d" returns ~path/analysis.tdf~ and ~path/analysis.tdf_bin~.
    In other cases the list might contain only the file path  itself.
 
- - hook_configuration.sh
+ - ~/.jit-file-provider/hook_configuration.sh
    This script describes the methods how files are obtained from the file source.
    This can be scp, ssh unzip or fuse-zip.
    It also contains the rules for cleanup i.e. the removal of files which have not been used for some time.
@@ -147,9 +161,7 @@ Program functions  which can be customized by the user are recognized by the pre
 Usage
 =====
 
-The jit-file-provider is installed on the machine where the software is run.
-
-The command line for the software  is prefixed  with LD_PRELOAD:
+The JIT-file-provider shared library is pre-loaded when the  the software is run.
 
      LD_PRELOAD=~/.jit_file_provider/libjit_file_provider.so    the-command  the arguments
 
@@ -158,33 +170,26 @@ The command line for the software  is prefixed  with LD_PRELOAD:
 Ahead of time
 =============
 
-Computation time on the cluster is valuable.
-We want to prevent idle states of the CPU of the cluster node due to file loading.
+Computation time on the cluster is valuable and network loading and  computation can run simultaneously.
 
-The idea is to run network loading and  number crunching simultaneously.
+By providing a  list of files in the  environment variable *FILELIST*, it is known, what file will come next and can already be loaded.
 
-By providing a  list of files in the  environment variable *FILELIST*,
-*libjit_file_provider.so* knows what file will be needed next.
-
-The shell script itself can serve as this list in which case  *libjit_file_provider.so* will collect all
-strings that look like an absolute path.
+The shell script itself can serve as this list since only those strings are regarded that like an absolute path.
 
 Fuse-zip
 ========
 
-Instead of copying the files, the software can also mount ZIP files.  This can be used when the ZIP
-files are available in the file system of the computer.
+If the ZIP archives are accessible through the file system, the software can also mount ZIP files such that the analysis software can load  ZIP entries as files.
 
-Large numbers of  simultaneous mounts (>2000) is unfavorable.
-
-JIT-file-provider solves this problem by mounting just the the ZIP files currently used.
+JIT-file-provider can unmount ZIP files that have not been used for a number of minutes.
+This avoids large numbers of  simultaneous mounts which may cause problems.
 
 
 Parallel access to conventional spinning hard-disks
 ===================================================
 
-Several parallel HPC jobs may lead to increased seeks of the read/write head of the HD which is hosting the  file archive.
-This may put strain on the HD and deteriorates performance.
+Several parallel HPC jobs may lead to increased seeks and movements of the head of the HD  hosting the  file archive.
+This may deteriorates performance, put strain on the HD and shorten life span.
 
 We are currently experimenting with increasing the read-ahead and the unzip buffer:
 
