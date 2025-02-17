@@ -46,7 +46,7 @@ JIT-file-provider is a pre-loaded shared library which calls a Bash script *hook
 
 
 The user gives rules which files are  obtained by what method.   In our case
-a file may be  loaded by running  /usr/bin/unzip:
+a file may be  loaded by running  */usr/bin/unzip*:
 
     sshpass -e ssh   user@hostname  nocache unzip -p zip-file.zip  zip-entry > file
 
