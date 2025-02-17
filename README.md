@@ -90,12 +90,10 @@ Run the script
 
     testing/testing_JIT_file_provider.sh
 
-This script creates a ZIP file repository in
+This script creates a ZIP file repository simulates the file repository from which the files need to be extracted in
 
     ~/test_JIT_file_provider
 
-
-This simulates the file repository from which the files need to be extracted.
 
 <!-- This folder name serves as a pattern in the configuration files *hook_configuration.sh* and *jit_file_provider_configuration.c*. -->
 <!-- JIT-file-provider accesses the ZIP entries using one of the methods -->
