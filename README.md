@@ -51,7 +51,7 @@ a file may be  loaded by running  */usr/bin/unzip*:
     sshpass -e ssh   user@hostname  nocache unzip -p zip-file.zip  zip-entry > file
 
 Subsequently, the crc32-checksum is compared to the checksum in the Zip file.
-Alternatively, files are copied with ~/usr/bin/scp~ or ZIP archives are mounted with ~/usr/bin/fuse-zip~.
+Alternatively, files are copied with */usr/bin/scp* or ZIP archives are mounted with */usr/bin/fuse-zip*.
 
 The last-access time is used for clean-up.  Files which have not been used for a given number of minutes are automatically removed
 to free disk space on the cluster.  The last-access time is updated explicitly for the case that the mount option  *noatime* is activated.
@@ -62,7 +62,7 @@ Installation
 
 
 
-JIT-file-provider is installed  on the target machine like the  HPC cluster by running the installer script ~libjit_file_provider.compile.sh~.
+JIT-file-provider is installed  on the target machine like the  HPC cluster by running the installer script *libjit_file_provider.compile.sh*.
 The C compiler gcc or clang is sufficient.
 
 Three files are generated:
@@ -77,7 +77,7 @@ Testing
 =======
 
 SSH needs to be set up to work unattended without entering a password. This may be done for the current or a different user ID.
-A simple and secure approach is to create a user ID with read access to the data and to set the variable ~SSHPASS~ with the password of this user ID:
+A simple and secure approach is to create a user ID with read access to the data and to set the variable *SSHPASS* with the password of this user ID:
 
     export SSHPASS='the secret password'
 
@@ -97,7 +97,7 @@ This script creates a ZIP file repository in
 
 This simulates the file repository from which the files need to be extracted.
 
-<!-- This folder name serves as a pattern in the configuration files ~hook_configuration.sh~ and ~jit_file_provider_configuration.c~. -->
+<!-- This folder name serves as a pattern in the configuration files *hook_configuration.sh* and *jit_file_provider_configuration.c*. -->
 <!-- JIT-file-provider accesses the ZIP entries using one of the methods -->
 
 The program menu, lets you specify a user ID. Then you can choose one of the above methods.
@@ -123,7 +123,7 @@ Then a  test  command like the following may be used for validation:
 
     LD_PRELOAD=~/.jit_file_provider/libjit_file_provider.so head ~/.jit_file_provider/files/file-path | strings
 
-The respective files  appear in  ~$HOME/.jit_file_provider/files~  as soon as they are loaded by the command, here ~/usr/bin/head~.
+The respective files  appear in  *~/.jit_file_provider/files*  as soon as they are loaded by the command, here */usr/bin/head*.
 
 Verbosity can be activated with environment variables.
 
@@ -140,14 +140,14 @@ Usually,  this file does not need to be modified.
    For example  JIT-file-provider worked fine on our development machine, but failed on the  HPC cluster because
    the function *stat()* was implemented with the method   statx() in the standard C-library.
    To identify problems like this, JIT-file-provider reports all caught functions once as   *Calling hook ...*, however stat() did not appear.
-   With the tool ~/usr/bin/strace~ we found that  *statx()* and not *stat()* is reported . Adding it to the list in jit_file_provider_symbols_configuration.c and solved the problem.
+   With the tool */usr/bin/strace* we found that  *statx()* and not *stat()* is reported . Adding it to the list in jit_file_provider_symbols_configuration.c and solved the problem.
    Please report cases like this.
 
 - jit_file_provider_configuration.c:
    When jit_file_provider.so catches  calls to methods like fopen() the paths are evaluated by the function  *configuration_filelist()* which   returns
    a NULL terminated list of files needed along with the given path.
    This list may be empty for files not to be managed by jit-file-provider.
-   In our example a path with the ending ".d" returns ~path/analysis.tdf~ and ~path/analysis.tdf_bin~.
+   In our example a path with the ending ".d" returns *path/analysis.tdf* and *path/analysis.tdf_bin*.
    In other cases the list might contain only the file path  itself.
 
  - ~/.jit-file-provider/hook_configuration.sh
