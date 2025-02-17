@@ -170,7 +170,7 @@ Ahead of time
 
 Computation time on the cluster is valuable and network loading and  computation can run simultaneously.
 
-By providing a  list of files in the  environment variable *FILELIST*, it is known, what file will come next and can already be loaded.
+By providing a  list of files in the  environment variable *FILELIST*, it is known, what file will come next. These files can be prefetched in anticipation of them being needed soon.
 
 The shell script itself can serve as this list since only those strings are regarded that like an absolute path.
 
